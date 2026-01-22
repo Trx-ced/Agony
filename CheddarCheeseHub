@@ -16,6 +16,22 @@ local State = {
 	TitanESPBoxTransparency = 1
 }
 
+local Connections = {}
+local function track(conn)
+	table.insert(Connections, conn)
+	return conn
+end
+
+local unloaded = false
+local function safeDisconnectAll()
+	for _, c in ipairs(Connections) do
+		pcall(function()
+			c:Disconnect()
+		end)
+	end
+	table.clear(Connections)
+end
+
 local COLLISION_HITBOX_NAMES = {
 	LeftFootCollision = true,
 	LeftHandCollision = true,
@@ -30,8 +46,9 @@ local COLLISION_HITBOX_NAMES = {
 	RightLowerLegCollision = true,
 	RightUpperArmCollision = true,
 	RightUpperLegCollision = true,
+
 	Head = true,
-	Jaw = true, 
+	Jaw = true,
 }
 
 local LIMB_NAMES = {
@@ -215,13 +232,13 @@ end
 
 patchAll()
 
-TitansFolder.ChildAdded:Connect(function(rig)
+track(TitansFolder.ChildAdded:Connect(function(rig)
 	task.wait(0.15)
 	patchRig(rig)
 	task.delay(0.75, function()
 		patchRig(rig)
 	end)
-end)
+end))
 
 local debugByNape = {}
 
@@ -287,7 +304,7 @@ local function espAttach(rig)
 	local bb, label = makeText(nape)
 	debugByNape[nape] = { box = box, bb = bb, label = label, rig = rig }
 
-	nape.AncestryChanged:Connect(function(_, parent)
+	track(nape.AncestryChanged:Connect(function(_, parent)
 		if parent == nil then
 			local info = debugByNape[nape]
 			if info then
@@ -296,7 +313,7 @@ local function espAttach(rig)
 			end
 			debugByNape[nape] = nil
 		end
-	end)
+	end))
 end
 
 local function espDetachAll()
@@ -318,10 +335,12 @@ local function espApplyTransparency()
 end
 
 for _, rig in ipairs(TitansFolder:GetChildren()) do
-	espAttach(rig)
+	if State.TitanESP then
+		espAttach(rig)
+	end
 end
 
-TitansFolder.ChildAdded:Connect(function(rig)
+track(TitansFolder.ChildAdded:Connect(function(rig)
 	task.wait(0.15)
 	if State.TitanESP then
 		espAttach(rig)
@@ -331,9 +350,9 @@ TitansFolder.ChildAdded:Connect(function(rig)
 			espAttach(rig)
 		end
 	end)
-end)
+end))
 
-RunService.RenderStepped:Connect(function()
+track(RunService.RenderStepped:Connect(function()
 	if not State.TitanESP then return end
 	local hrp = getRoot()
 	if not hrp then return end
@@ -346,7 +365,7 @@ RunService.RenderStepped:Connect(function()
 			info.label.Text = string.format("%s  |  %.1f studs", ttype, dist)
 		end
 	end
-end)
+end))
 
 local function mk(t, props)
 	local inst = Instance.new(t)
@@ -382,18 +401,18 @@ local main = mk("Frame", {
 mk("UICorner", { Parent = main, CornerRadius = UDim.new(0, 8) })
 mk("UIStroke", { Parent = main, Color = COL_STROKE, Thickness = 1, Transparency = 0.35 })
 
-local top = mk("Frame", {
+local topBar = mk("Frame", {
 	Parent = main,
 	Size = UDim2.new(1, 0, 0, 34),
 	BackgroundColor3 = COL_BG,
 	BorderSizePixel = 0,
 })
-mk("UIStroke", { Parent = top, Color = COL_STROKE, Thickness = 1, Transparency = 0.5 })
+mk("UIStroke", { Parent = topBar, Color = COL_STROKE, Thickness = 1, Transparency = 0.5 })
 
 mk("TextLabel", {
-	Parent = top,
+	Parent = topBar,
 	Position = UDim2.new(0, 12, 0, 0),
-	Size = UDim2.new(1, -160, 1, 0),
+	Size = UDim2.new(1, -220, 1, 0),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamBold,
 	TextSize = 14,
@@ -403,9 +422,9 @@ mk("TextLabel", {
 })
 
 mk("TextLabel", {
-	Parent = top,
+	Parent = topBar,
 	AnchorPoint = Vector2.new(1, 0.5),
-	Position = UDim2.new(1, -46, 0.5, 0),
+	Position = UDim2.new(1, -80, 0.5, 0),
 	Size = UDim2.new(0, 200, 1, 0),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -415,8 +434,24 @@ mk("TextLabel", {
 	Text = "RightShift to toggle UI",
 })
 
+local closeBtn = mk("TextButton", {
+	Parent = topBar,
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -40, 0.5, 0),
+	Size = UDim2.new(0, 26, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(120, 55, 55),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	Text = "X",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = closeBtn, CornerRadius = UDim.new(0, 6) })
+mk("UIStroke", { Parent = closeBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.4 })
+
 local minimizeBtn = mk("TextButton", {
-	Parent = top,
+	Parent = topBar,
 	AnchorPoint = Vector2.new(1, 0.5),
 	Position = UDim2.new(1, -10, 0.5, 0),
 	Size = UDim2.new(0, 26, 0, 22),
@@ -449,7 +484,6 @@ local content = mk("Frame", {
 })
 
 local pages = {}
-
 local function newPage(name)
 	local f = mk("Frame", {
 		Parent = content,
@@ -643,6 +677,22 @@ local resetPos = mk("TextButton", {
 	AutoButtonColor = false,
 })
 mk("UICorner", { Parent = resetPos, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = resetPos, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local unloadBtn = mk("TextButton", {
+	Parent = boxU,
+	Position = UDim2.new(0, 12, 0, 110),
+	Size = UDim2.new(0, 180, 0, 26),
+	BackgroundColor3 = Color3.fromRGB(120, 55, 55),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Unload Hub",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = unloadBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = unloadBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
 
 local tabButtons = {}
 
@@ -673,9 +723,9 @@ local function makeSideTab(y, text, name)
 	})
 	mk("UICorner", { Parent = tab, CornerRadius = UDim.new(0, 10) })
 	tabButtons[name] = tab
-	tab.MouseButton1Click:Connect(function()
+	track(tab.MouseButton1Click:Connect(function()
 		setTabActive(name)
-	end)
+	end))
 	return tab
 end
 
@@ -718,19 +768,41 @@ local function refresh()
 	end
 end
 
-napeToggle.MouseButton1Click:Connect(function()
+local function unload()
+	if unloaded then return end
+	unloaded = true
+	State.TitanESP = false
+	espDetachAll()
+	safeDisconnectAll()
+	if gui then
+		gui:Destroy()
+	end
+end
+
+track(closeBtn.MouseButton1Click:Connect(function()
+	unload()
+end))
+
+track(unloadBtn.MouseButton1Click:Connect(function()
+	unload()
+end))
+
+track(napeToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
 	State.NapeEnabled = not State.NapeEnabled
 	patchAll()
 	refresh()
-end)
+end))
 
-grabHBtoggle.MouseButton1Click:Connect(function()
+track(grabHBtoggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
 	State.DisableGrabHitboxes = not State.DisableGrabHitboxes
 	patchAll()
 	refresh()
-end)
+end))
 
-espToggle.MouseButton1Click:Connect(function()
+track(espToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
 	State.TitanESP = not State.TitanESP
 	if State.TitanESP then
 		for _, rig in ipairs(TitansFolder:GetChildren()) do
@@ -741,72 +813,85 @@ espToggle.MouseButton1Click:Connect(function()
 		espDetachAll()
 	end
 	refresh()
-end)
+end))
 
-applyBtn.MouseButton1Click:Connect(function()
+track(applyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
 	applyMultiplier()
 	refresh()
-end)
+end))
 
-multBox.FocusLost:Connect(function()
+track(multBox.FocusLost:Connect(function()
+	if unloaded then return end
 	applyMultiplier()
 	refresh()
-end)
+end))
 
-espApplyBtn.MouseButton1Click:Connect(function()
+track(espApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
 	applyESPTrans()
 	refresh()
-end)
+end))
 
-espTransBox.FocusLost:Connect(function()
+track(espTransBox.FocusLost:Connect(function()
+	if unloaded then return end
 	applyESPTrans()
 	refresh()
-end)
+end))
 
-resetPos.MouseButton1Click:Connect(function()
+track(resetPos.MouseButton1Click:Connect(function()
+	if unloaded then return end
 	main.Position = UDim2.new(0.15, 0, 0.2, 0)
-end)
+end))
 
 do
 	local dragging = false
 	local dragStart, startPos
-	local top = top
-	top.InputBegan:Connect(function(input)
+
+	track(topBar.InputBegan:Connect(function(input)
+		if unloaded then return end
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			dragging = true
 			dragStart = input.Position
 			startPos = main.Position
 		end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
+	end))
+
+	track(UserInputService.InputChanged:Connect(function(input)
+		if unloaded then return end
 		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
 			local delta = input.Position - dragStart
 			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
+	end))
+
+	track(UserInputService.InputEnded:Connect(function(input)
+		if unloaded then return end
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			dragging = false
 		end
-	end)
+	end))
 end
 
 local minimized = false
 local fullSize = main.Size
-minimizeBtn.MouseButton1Click:Connect(function()
+
+track(minimizeBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
 	minimized = not minimized
 	content.Visible = not minimized
 	side.Visible = not minimized
 	main.Size = minimized and UDim2.new(fullSize.X.Scale, fullSize.X.Offset, 0, 34) or fullSize
 	minimizeBtn.Text = minimized and "+" or "–"
-end)
+end))
 
-UserInputService.InputBegan:Connect(function(input, gp)
+track(UserInputService.InputBegan:Connect(function(input, gp)
+	if unloaded then return end
 	if gp then return end
 	if input.KeyCode == Enum.KeyCode.RightShift then
 		gui.Enabled = not gui.Enabled
 	end
-end)
+end))
 
 setTabActive("Main")
 refresh()
