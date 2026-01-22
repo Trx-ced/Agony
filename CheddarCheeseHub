@@ -9,11 +9,11 @@ local TitansFolder = workspace:WaitForChild("MainFolders"):WaitForChild("Titans"
 local TemplateRig = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("Titan"):WaitForChild("Rig")
 
 local State = {
-	NapeEnabled = true,
-	NapeMult = 2,
-	DisableGrabHitboxes = true,
-	TitanESP = true,
-	TitanESPBoxTransparency = 0.6
+	NapeEnabled = false,
+	NapeMult = 5,
+	DisableGrabHitboxes = false,
+	TitanESP = false,
+	TitanESPBoxTransparency = 1
 }
 
 local COLLISION_HITBOX_NAMES = {
