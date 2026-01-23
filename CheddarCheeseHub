@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 
@@ -13,7 +14,10 @@ local State = {
 	NapeMult = 5,
 	DisableGrabHitboxes = false,
 	TitanESP = false,
-	TitanESPBoxTransparency = 1
+	TitanESPBoxTransparency = 1,
+	SafeFallEnabled = false,
+	MinFallTime = 0.5,
+	NearGroundDist = 15
 }
 
 local Connections = {}
@@ -367,6 +371,229 @@ track(RunService.RenderStepped:Connect(function()
 	end
 end))
 
+local SafeFall = {}
+do
+	local MIN_DOWNWARD_SPEED = 55
+	local COOLDOWN = 0.8
+	local POST_RELEASE_GRACE = 0.35
+	local HOVER_HEIGHT = 3
+	local RAY_DISTANCE = 1500
+	local ALIGN_MAX_FORCE = 90000
+	local ALIGN_RESPONSIVENESS = 35
+
+	local lastTrigger = 0
+	local ignoreUntil = 0
+
+	local sfConns = {}
+	local function sfDisconnect()
+		for _, c in ipairs(sfConns) do
+			pcall(function() c:Disconnect() end)
+		end
+		table.clear(sfConns)
+	end
+
+	local function sfTrack(conn)
+		table.insert(sfConns, conn)
+		return conn
+	end
+
+	local function getJumpHeightStuds(humanoid)
+		local g = Workspace.Gravity
+		if humanoid.UseJumpPower == false then
+			local jh = humanoid.JumpHeight
+			if jh and jh > 0 then
+				return jh
+			end
+		end
+		local jp = humanoid.JumpPower or 50
+		return (jp * jp) / (2 * g)
+	end
+
+	local function raycastDown(character, origin)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { character }
+		params.IgnoreWater = true
+		return Workspace:Raycast(origin, Vector3.new(0, -RAY_DISTANCE, 0), params)
+	end
+
+	local function cleanupSoftLand(root)
+		local ap = root:FindFirstChild("__SafeFallAlignPosition")
+		if ap then ap:Destroy() end
+		local att = root:FindFirstChild("__SafeFallAttachment")
+		if att then att:Destroy() end
+	end
+
+	local function softLand(character, humanoid, root)
+		if tick() < ignoreUntil then return end
+		if (tick() - lastTrigger) < COOLDOWN then return end
+		lastTrigger = tick()
+
+		local hit = raycastDown(character, root.Position)
+		if not hit then return end
+
+		cleanupSoftLand(root)
+
+		local att = Instance.new("Attachment")
+		att.Name = "__SafeFallAttachment"
+		att.Parent = root
+
+		local ap = Instance.new("AlignPosition")
+		ap.Name = "__SafeFallAlignPosition"
+		ap.Mode = Enum.PositionAlignmentMode.OneAttachment
+		ap.Attachment0 = att
+		ap.MaxForce = ALIGN_MAX_FORCE
+		ap.Responsiveness = ALIGN_RESPONSIVENESS
+		ap.RigidityEnabled = false
+		ap.Parent = root
+
+		local v = root.AssemblyLinearVelocity
+		root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, -20), v.Z)
+
+		humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+
+		local start = tick()
+		local maxTime = 1.25
+
+		local conn
+		conn = RunService.Heartbeat:Connect(function()
+			if not character.Parent or humanoid.Health <= 0 then
+				if conn then conn:Disconnect() end
+				cleanupSoftLand(root)
+				return
+			end
+
+			if (tick() - start) > maxTime then
+				if conn then conn:Disconnect() end
+				cleanupSoftLand(root)
+				ignoreUntil = tick() + POST_RELEASE_GRACE
+				return
+			end
+
+			local h = raycastDown(character, root.Position)
+			if not h then
+				if conn then conn:Disconnect() end
+				cleanupSoftLand(root)
+				ignoreUntil = tick() + POST_RELEASE_GRACE
+				return
+			end
+
+			local targetY = h.Position.Y + HOVER_HEIGHT
+			ap.Position = Vector3.new(root.Position.X, targetY, root.Position.Z)
+
+			local distToFloor = root.Position.Y - h.Position.Y
+			if distToFloor <= (HOVER_HEIGHT + 0.6) then
+				if conn then conn:Disconnect() end
+				cleanupSoftLand(root)
+				humanoid:ChangeState(Enum.HumanoidStateType.Running)
+				ignoreUntil = tick() + POST_RELEASE_GRACE
+				return
+			end
+		end)
+	end
+
+	local function setup(character)
+		sfDisconnect()
+
+		local humanoid = character:WaitForChild("Humanoid", 10)
+		local root = character:WaitForChild("HumanoidRootPart", 10)
+		if not humanoid or not root then return end
+
+		local Misc = false
+		local fallStart = 0
+		local peakY = 0
+		local armed = false
+
+		local function resetFall()
+			Misc = false
+			armed = false
+			fallStart = 0
+			peakY = 0
+		end
+
+		sfTrack(humanoid.StateChanged:Connect(function(_, newState)
+			if newState == Enum.HumanoidStateType.Freefall then
+				if not Misc then
+					Misc = true
+					armed = false
+					fallStart = tick()
+					peakY = root.Position.Y
+				end
+			elseif newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running then
+				resetFall()
+				cleanupSoftLand(root)
+				ignoreUntil = tick() + 0.15
+			end
+		end))
+
+		sfTrack(RunService.Heartbeat:Connect(function()
+			if not character.Parent or humanoid.Health <= 0 then
+				resetFall()
+				return
+			end
+
+			if not State.SafeFallEnabled then
+				if Misc then
+					resetFall()
+					cleanupSoftLand(root)
+				end
+				return
+			end
+
+			if tick() < ignoreUntil then return end
+			if not Misc then return end
+
+			local y = root.Position.Y
+			if y > peakY then peakY = y end
+
+			local v = root.AssemblyLinearVelocity
+			if v.Y > -MIN_DOWNWARD_SPEED then
+				return
+			end
+
+			local fallDist = peakY - y
+			if fallDist <= getJumpHeightStuds(humanoid) then
+				return
+			end
+
+			local minTime = math.clamp(State.MinFallTime, 0, 1)
+			if not armed and (tick() - fallStart) >= minTime then
+				armed = true
+			end
+			if not armed then return end
+
+			local hit = raycastDown(character, root.Position)
+			if not hit then return end
+
+			local near = math.clamp(State.NearGroundDist, 8, 25)
+			local distToFloor = root.Position.Y - hit.Position.Y
+			if distToFloor > near then
+				return
+			end
+
+			softLand(character, humanoid, root)
+		end))
+
+		sfTrack(humanoid.Died:Connect(function()
+			resetFall()
+			if root and root.Parent then
+				cleanupSoftLand(root)
+			end
+		end))
+	end
+
+	SafeFall.Setup = setup
+	SafeFall.Disconnect = sfDisconnect
+end
+
+track(player.CharacterAdded:Connect(function(char)
+	if unloaded then return end
+	SafeFall.Setup(char)
+end))
+if player.Character then
+	SafeFall.Setup(player.Character)
+end
+
 local function mk(t, props)
 	local inst = Instance.new(t)
 	for k, v in pairs(props or {}) do
@@ -412,7 +639,7 @@ mk("UIStroke", { Parent = topBar, Color = COL_STROKE, Thickness = 1, Transparenc
 mk("TextLabel", {
 	Parent = topBar,
 	Position = UDim2.new(0, 12, 0, 0),
-	Size = UDim2.new(1, -220, 1, 0),
+	Size = UDim2.new(1, -260, 1, 0),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamBold,
 	TextSize = 14,
@@ -424,7 +651,7 @@ mk("TextLabel", {
 mk("TextLabel", {
 	Parent = topBar,
 	AnchorPoint = Vector2.new(1, 0.5),
-	Position = UDim2.new(1, -80, 0.5, 0),
+	Position = UDim2.new(1, -110, 0.5, 0),
 	Size = UDim2.new(0, 200, 1, 0),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -497,6 +724,7 @@ end
 
 local pageMain = newPage("Main")
 local pageVisuals = newPage("Visuals")
+local pageMisc = newPage("Misc")
 local pageUI = newPage("UI Settings")
 
 local function sectionBox(parent, x, y, w, h, headerText)
@@ -651,6 +879,91 @@ local espApplyBtn = mk("TextButton", {
 })
 mk("UICorner", { Parent = espApplyBtn, CornerRadius = UDim.new(0, 8) })
 
+local boxF = sectionBox(pageMisc, 16, 16, 420, 320, "Misc")
+local safeFallToggle = toggleRow(boxF, 44, "Safe Fall (Soft Land)")
+
+mk("TextLabel", {
+	Parent = boxF,
+	Position = UDim2.new(0, 12, 0, 88),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Minimum Fall Time (0-1)",
+})
+
+local minFallBox = mk("TextBox", {
+	Parent = boxF,
+	Position = UDim2.new(0, 12, 0, 110),
+	Size = UDim2.new(0, 280, 0, 26),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.MinFallTime),
+})
+mk("UICorner", { Parent = minFallBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = minFallBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local minFallApply = mk("TextButton", {
+	Parent = boxF,
+	Position = UDim2.new(0, 302, 0, 110),
+	Size = UDim2.new(0, 106, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = minFallApply, CornerRadius = UDim.new(0, 8) })
+
+mk("TextLabel", {
+	Parent = boxF,
+	Position = UDim2.new(0, 12, 0, 150),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Near Ground Distance (8-25)",
+})
+
+local nearGroundBox = mk("TextBox", {
+	Parent = boxF,
+	Position = UDim2.new(0, 12, 0, 172),
+	Size = UDim2.new(0, 280, 0, 26),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.NearGroundDist),
+})
+mk("UICorner", { Parent = nearGroundBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = nearGroundBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local nearGroundApply = mk("TextButton", {
+	Parent = boxF,
+	Position = UDim2.new(0, 302, 0, 172),
+	Size = UDim2.new(0, 106, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = nearGroundApply, CornerRadius = UDim.new(0, 8) })
+
 local boxU = sectionBox(pageUI, 16, 16, 420, 320, "UI Settings")
 mk("TextLabel", {
 	Parent = boxU,
@@ -731,7 +1044,8 @@ end
 
 makeSideTab(12, "Main", "Main")
 makeSideTab(56, "Visuals", "Visuals")
-makeSideTab(100, "UI Settings", "UI Settings")
+makeSideTab(100, "Misc", "Misc")
+makeSideTab(144, "UI Settings", "UI Settings")
 
 local function applyMultiplier()
 	local n = tonumber(multBox.Text)
@@ -757,12 +1071,38 @@ local function applyESPTrans()
 	espApplyTransparency()
 end
 
+local function applyMinFall()
+	local n = tonumber(minFallBox.Text)
+	if not n then
+		minFallBox.Text = tostring(State.MinFallTime)
+		return
+	end
+	n = math.clamp(n, 0, 1)
+	State.MinFallTime = n
+	minFallBox.Text = tostring(State.MinFallTime)
+end
+
+local function applyNearGround()
+	local n = tonumber(nearGroundBox.Text)
+	if not n then
+		nearGroundBox.Text = tostring(State.NearGroundDist)
+		return
+	end
+	n = math.floor(n + 0.5)
+	n = math.clamp(n, 8, 25)
+	State.NearGroundDist = n
+	nearGroundBox.Text = tostring(State.NearGroundDist)
+end
+
 local function refresh()
 	setToggle(napeToggle, State.NapeEnabled)
 	setToggle(grabHBtoggle, State.DisableGrabHitboxes)
 	setToggle(espToggle, State.TitanESP)
+	setToggle(safeFallToggle, State.SafeFallEnabled)
 	multBox.Text = tostring(State.NapeMult)
 	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
+	minFallBox.Text = tostring(State.MinFallTime)
+	nearGroundBox.Text = tostring(State.NearGroundDist)
 	if not State.TitanESP then
 		espDetachAll()
 	end
@@ -772,7 +1112,9 @@ local function unload()
 	if unloaded then return end
 	unloaded = true
 	State.TitanESP = false
+	State.SafeFallEnabled = false
 	espDetachAll()
+	SafeFall.Disconnect()
 	safeDisconnectAll()
 	if gui then
 		gui:Destroy()
@@ -815,6 +1157,12 @@ track(espToggle.MouseButton1Click:Connect(function()
 	refresh()
 end))
 
+track(safeFallToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.SafeFallEnabled = not State.SafeFallEnabled
+	refresh()
+end))
+
 track(applyBtn.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	applyMultiplier()
@@ -836,6 +1184,30 @@ end))
 track(espTransBox.FocusLost:Connect(function()
 	if unloaded then return end
 	applyESPTrans()
+	refresh()
+end))
+
+track(minFallApply.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyMinFall()
+	refresh()
+end))
+
+track(minFallBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyMinFall()
+	refresh()
+end))
+
+track(nearGroundApply.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyNearGround()
+	refresh()
+end))
+
+track(nearGroundBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyNearGround()
 	refresh()
 end))
 
