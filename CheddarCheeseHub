@@ -23,7 +23,7 @@ local State = {
 	VelocityUseKeybind = false,
 	VelocityKey = Enum.KeyCode.LeftShift,
 	VelocityMult = 1.05,
-	VelocityAddSpeed = 45,
+	VelocityAddSpeed = 0,
 	VelocityMaxSpeed = 250
 }
 
