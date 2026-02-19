@@ -1,0 +1,887 @@
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Living = workspace:WaitForChild("Living")
+
+local enabledSelected = false
+local enabledAll = false
+local uiVisible = true
+local expanded = false
+
+local selectedPlayers = {}
+local selectedTorso = {}
+local selectedHighlights = {}
+local allHighlights = {}
+local original = {}
+local buttons = {}
+
+local function getTorso(character)
+	if not character then return nil end
+	return character:FindFirstChild("Torso")
+		or character:FindFirstChild("UpperTorso")
+		or character:FindFirstChild("HumanoidRootPart")
+end
+
+local function findLivingCharacterForPlayer(plr)
+	local model = Living:FindFirstChild(plr.Name)
+	if model and model:IsA("Model") then return model end
+	if plr.Character and plr.Character:IsA("Model") then return plr.Character end
+	return nil
+end
+
+local function clampNum(n, lo, hi)
+	if n ~= n then return lo end
+	if n < lo then return lo end
+	if n > hi then return hi end
+	return n
+end
+
+local function parseSize(xText, yText, zText)
+	local x = tonumber(xText) or 8
+	local y = tonumber(yText) or 10
+	local z = tonumber(zText) or 4
+	x = clampNum(x, 1, 100)
+	y = clampNum(y, 1, 100)
+	z = clampNum(z, 1, 100)
+	return Vector3.new(x, y, z)
+end
+
+local function cacheOriginal(torso)
+	if not torso or not torso:IsA("BasePart") then return end
+	if original[torso] then return end
+	original[torso] = {
+		size = torso.Size,
+		transparency = torso.Transparency,
+		canCollide = torso.CanCollide,
+		canTouch = torso.CanTouch,
+		canQuery = torso.CanQuery,
+		massless = torso.Massless,
+	}
+end
+
+local function applyHitbox(torso, sizeVec)
+	if not torso or not torso:IsA("BasePart") then return end
+	cacheOriginal(torso)
+	torso.Size = sizeVec
+	torso.Transparency = 1
+	torso.CanCollide = false
+	torso.CanTouch = false
+	torso.CanQuery = false
+	torso.Massless = true
+end
+
+local function revertTorso(torso)
+	local data = torso and original[torso]
+	if not data then return end
+	torso.Size = data.size
+	torso.Transparency = data.transparency
+	torso.CanCollide = data.canCollide
+	torso.CanTouch = data.canTouch
+	torso.CanQuery = data.canQuery
+	torso.Massless = data.massless
+	original[torso] = nil
+end
+
+local function clearHighlights(map)
+	for k, h in pairs(map) do
+		if h then h:Destroy() end
+		map[k] = nil
+	end
+end
+
+local function setHighlight(map, torso, nameTag, fillT, outlineT)
+	if not torso then return end
+	if map[torso] then return end
+	local h = Instance.new("Highlight")
+	h.Name = nameTag
+	h.Adornee = torso
+	h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	h.FillTransparency = fillT
+	h.OutlineTransparency = outlineT
+	h.Parent = torso
+	map[torso] = h
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "CheddarCheeseHub_UI"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local root = Instance.new("Frame")
+root.Name = "Root"
+root.Size = UDim2.new(0, 760, 0, 430)
+root.Position = UDim2.new(0.5, 0, 0.5, 0)
+root.AnchorPoint = Vector2.new(0.5, 0.5)
+root.BackgroundColor3 = Color3.fromRGB(14, 14, 16)
+root.BorderSizePixel = 0
+root.Parent = gui
+
+local rootCorner = Instance.new("UICorner")
+rootCorner.CornerRadius = UDim.new(0, 14)
+rootCorner.Parent = root
+
+local rootStroke = Instance.new("UIStroke")
+rootStroke.Thickness = 1
+rootStroke.Color = Color3.fromRGB(38, 38, 42)
+rootStroke.Parent = root
+
+local topbar = Instance.new("Frame")
+topbar.Name = "Topbar"
+topbar.Size = UDim2.new(1, 0, 0, 44)
+topbar.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+topbar.BorderSizePixel = 0
+topbar.Parent = root
+
+local topCorner = Instance.new("UICorner")
+topCorner.CornerRadius = UDim.new(0, 14)
+topCorner.Parent = topbar
+
+local topMask = Instance.new("Frame")
+topMask.Size = UDim2.new(1, 0, 0, 16)
+topMask.Position = UDim2.new(0, 0, 1, -16)
+topMask.BackgroundColor3 = topbar.BackgroundColor3
+topMask.BorderSizePixel = 0
+topMask.Parent = topbar
+
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Size = UDim2.new(1, -170, 1, 0)
+title.Position = UDim2.new(0, 16, 0, 0)
+title.Font = Enum.Font.GothamSemibold
+title.TextSize = 16
+title.TextColor3 = Color3.fromRGB(245, 245, 248)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Text = "CheddarCheese Hub | Seven Knights"
+title.Parent = topbar
+
+local hint = Instance.new("TextLabel")
+hint.BackgroundTransparency = 1
+hint.Size = UDim2.new(0, 280, 1, 0)
+hint.Position = UDim2.new(1, -460, 0, 0)
+hint.Font = Enum.Font.Gotham
+hint.TextSize = 12
+hint.TextColor3 = Color3.fromRGB(170, 170, 178)
+hint.TextXAlignment = Enum.TextXAlignment.Right
+hint.Text = "LeftAlt to toggle UI"
+hint.Parent = topbar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 34, 0, 28)
+closeBtn.Position = UDim2.new(1, -46, 0, 8)
+closeBtn.BackgroundColor3 = Color3.fromRGB(132, 56, 56)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "X"
+closeBtn.Font = Enum.Font.GothamSemibold
+closeBtn.TextSize = 14
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.Parent = topbar
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 8)
+closeCorner.Parent = closeBtn
+
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 34, 0, 28)
+minimizeBtn.Position = UDim2.new(1, -86, 0, 8)
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
+minimizeBtn.BorderSizePixel = 0
+minimizeBtn.Text = "—"
+minimizeBtn.Font = Enum.Font.GothamSemibold
+minimizeBtn.TextSize = 18
+minimizeBtn.TextColor3 = Color3.fromRGB(240, 240, 245)
+minimizeBtn.Parent = topbar
+
+local minCorner = Instance.new("UICorner")
+minCorner.CornerRadius = UDim.new(0, 8)
+minCorner.Parent = minimizeBtn
+
+local body = Instance.new("Frame")
+body.Size = UDim2.new(1, 0, 1, -44)
+body.Position = UDim2.new(0, 0, 0, 44)
+body.BackgroundTransparency = 1
+body.Parent = root
+
+local sidebar = Instance.new("Frame")
+sidebar.Size = UDim2.new(0, 190, 1, 0)
+sidebar.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
+sidebar.BorderSizePixel = 0
+sidebar.Parent = body
+
+local sideStroke = Instance.new("UIStroke")
+sideStroke.Thickness = 1
+sideStroke.Color = Color3.fromRGB(30, 30, 34)
+sideStroke.Parent = sidebar
+
+local sidePadding = Instance.new("UIPadding")
+sidePadding.PaddingTop = UDim.new(0, 14)
+sidePadding.PaddingLeft = UDim.new(0, 12)
+sidePadding.PaddingRight = UDim.new(0, 12)
+sidePadding.Parent = sidebar
+
+local sideLayout = Instance.new("UIListLayout")
+sideLayout.Padding = UDim.new(0, 10)
+sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
+sideLayout.Parent = sidebar
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -206, 1, -16)
+content.Position = UDim2.new(0, 206, 0, 8)
+content.BackgroundTransparency = 1
+content.Parent = body
+
+local pages = Instance.new("Folder")
+pages.Parent = content
+
+local function makeCard(parent, titleText)
+	local c = Instance.new("Frame")
+	c.Size = UDim2.new(1, 0, 1, 0)
+	c.BackgroundColor3 = Color3.fromRGB(16, 16, 19)
+	c.BorderSizePixel = 0
+	c.Visible = false
+	c.Parent = parent
+
+	local cc = Instance.new("UICorner")
+	cc.CornerRadius = UDim.new(0, 14)
+	cc.Parent = c
+
+	local cs = Instance.new("UIStroke")
+	cs.Thickness = 1
+	cs.Color = Color3.fromRGB(34, 34, 40)
+	cs.Parent = c
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 16)
+	pad.PaddingLeft = UDim.new(0, 16)
+	pad.PaddingRight = UDim.new(0, 16)
+	pad.PaddingBottom = UDim.new(0, 16)
+	pad.Parent = c
+
+	local header = Instance.new("TextLabel")
+	header.BackgroundTransparency = 1
+	header.Size = UDim2.new(1, 0, 0, 24)
+	header.Font = Enum.Font.GothamSemibold
+	header.TextSize = 16
+	header.TextColor3 = Color3.fromRGB(240, 240, 245)
+	header.TextXAlignment = Enum.TextXAlignment.Left
+	header.Text = titleText
+	header.Parent = c
+
+	local inner = Instance.new("Frame")
+	inner.BackgroundTransparency = 1
+	inner.Size = UDim2.new(1, 0, 1, -30)
+	inner.Position = UDim2.new(0, 0, 0, 30)
+	inner.Parent = c
+
+	return c, inner
+end
+
+local mainPage, mainInner = makeCard(pages, "Main")
+local visualsPage, visualsInner = makeCard(pages, "Visuals")
+local miscPage, miscInner = makeCard(pages, "Misc")
+local uiPage, uiInner = makeCard(pages, "UI Settings")
+mainPage.Visible = true
+
+local function tabButton(text, order)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, 0, 0, 42)
+	b.BackgroundColor3 = Color3.fromRGB(18, 18, 21)
+	b.BorderSizePixel = 0
+	b.Text = text
+	b.Font = Enum.Font.GothamSemibold
+	b.TextSize = 14
+	b.TextColor3 = Color3.fromRGB(235, 235, 240)
+	b.AutoButtonColor = false
+	b.LayoutOrder = order
+	b.TextXAlignment = Enum.TextXAlignment.Left
+	b.Parent = sidebar
+
+	local bc = Instance.new("UICorner")
+	bc.CornerRadius = UDim.new(0, 12)
+	bc.Parent = b
+
+	local bs = Instance.new("UIStroke")
+	bs.Thickness = 1
+	bs.Color = Color3.fromRGB(28, 28, 32)
+	bs.Parent = b
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 14)
+	pad.Parent = b
+
+	return b, bs
+end
+
+local tabMain, tabMainStroke = tabButton("Main", 1)
+local tabVisuals, tabVisualsStroke = tabButton("Visuals", 2)
+local tabMisc, tabMiscStroke = tabButton("Misc", 3)
+local tabUI, tabUIStroke = tabButton("UI Settings", 4)
+
+local function setActiveTab(which)
+	mainPage.Visible = which == "Main"
+	visualsPage.Visible = which == "Visuals"
+	miscPage.Visible = which == "Misc"
+	uiPage.Visible = which == "UI"
+	local function setStroke(st, active)
+		st.Color = active and Color3.fromRGB(130, 88, 255) or Color3.fromRGB(28, 28, 32)
+		st.Thickness = active and 2 or 1
+	end
+	setStroke(tabMainStroke, which == "Main")
+	setStroke(tabVisualsStroke, which == "Visuals")
+	setStroke(tabMiscStroke, which == "Misc")
+	setStroke(tabUIStroke, which == "UI")
+end
+
+tabMain.MouseButton1Click:Connect(function() setActiveTab("Main") end)
+tabVisuals.MouseButton1Click:Connect(function() setActiveTab("Visuals") end)
+tabMisc.MouseButton1Click:Connect(function() setActiveTab("Misc") end)
+tabUI.MouseButton1Click:Connect(function() setActiveTab("UI") end)
+
+local function label(parent, text, y)
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.Size = UDim2.new(1, 0, 0, 18)
+	t.Position = UDim2.new(0, 0, 0, y or 0)
+	t.Font = Enum.Font.Gotham
+	t.TextSize = 12
+	t.TextColor3 = Color3.fromRGB(180, 180, 190)
+	t.TextXAlignment = Enum.TextXAlignment.Left
+	t.Text = text
+	t.Parent = parent
+	return t
+end
+
+local function pill(parent, text, w)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(0, w or 92, 0, 26)
+	b.BackgroundColor3 = Color3.fromRGB(120, 52, 52)
+	b.BorderSizePixel = 0
+	b.Text = text
+	b.Font = Enum.Font.GothamSemibold
+	b.TextSize = 12
+	b.TextColor3 = Color3.fromRGB(255, 255, 255)
+	b.AutoButtonColor = false
+	b.Parent = parent
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 999)
+	c.Parent = b
+	return b
+end
+
+local function inputBox(parent, w, defaultText)
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(0, w, 0, 34)
+	box.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
+	box.BorderSizePixel = 0
+	box.ClearTextOnFocus = false
+	box.Text = defaultText
+	box.Font = Enum.Font.GothamSemibold
+	box.TextSize = 13
+	box.TextColor3 = Color3.fromRGB(245, 245, 250)
+	box.Parent = parent
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 10)
+	c.Parent = box
+	local s = Instance.new("UIStroke")
+	s.Thickness = 1
+	s.Color = Color3.fromRGB(32, 32, 38)
+	s.Parent = box
+	local p = Instance.new("UIPadding")
+	p.PaddingLeft = UDim.new(0, 10)
+	p.PaddingRight = UDim.new(0, 10)
+	p.Parent = box
+	return box
+end
+
+local function purpleButton(parent, text, w)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(0, w or 110, 0, 34)
+	b.BackgroundColor3 = Color3.fromRGB(130, 88, 255)
+	b.BorderSizePixel = 0
+	b.Text = text
+	b.Font = Enum.Font.GothamSemibold
+	b.TextSize = 13
+	b.TextColor3 = Color3.fromRGB(255, 255, 255)
+	b.AutoButtonColor = false
+	b.Parent = parent
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 10)
+	c.Parent = b
+	return b
+end
+
+local layoutMain = Instance.new("UIListLayout")
+layoutMain.Padding = UDim.new(0, 14)
+layoutMain.SortOrder = Enum.SortOrder.LayoutOrder
+layoutMain.Parent = mainInner
+
+label(mainInner, "Hitbox Settings (Torso)", 0)
+
+local row1 = Instance.new("Frame")
+row1.BackgroundTransparency = 1
+row1.Size = UDim2.new(1, 0, 0, 34)
+row1.Parent = mainInner
+
+local targetBtn = Instance.new("TextButton")
+targetBtn.Size = UDim2.new(1, -240, 1, 0)
+targetBtn.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
+targetBtn.BorderSizePixel = 0
+targetBtn.Text = "Select Players"
+targetBtn.Font = Enum.Font.GothamSemibold
+targetBtn.TextSize = 13
+targetBtn.TextColor3 = Color3.fromRGB(245, 245, 250)
+targetBtn.AutoButtonColor = false
+targetBtn.TextXAlignment = Enum.TextXAlignment.Left
+targetBtn.Parent = row1
+
+local tbC = Instance.new("UICorner")
+tbC.CornerRadius = UDim.new(0, 10)
+tbC.Parent = targetBtn
+
+local tbS = Instance.new("UIStroke")
+tbS.Thickness = 1
+tbS.Color = Color3.fromRGB(32, 32, 38)
+tbS.Parent = targetBtn
+
+local tbP = Instance.new("UIPadding")
+tbP.PaddingLeft = UDim.new(0, 10)
+tbP.PaddingRight = UDim.new(0, 10)
+tbP.Parent = targetBtn
+
+local caret = Instance.new("TextLabel")
+caret.BackgroundTransparency = 1
+caret.Size = UDim2.new(0, 20, 1, 0)
+caret.Position = UDim2.new(1, -24, 0, 0)
+caret.Font = Enum.Font.GothamSemibold
+caret.TextSize = 14
+caret.TextColor3 = Color3.fromRGB(190, 190, 200)
+caret.Text = "▾"
+caret.Parent = targetBtn
+
+local toggleSelected = pill(row1, "SEL: OFF", 72)
+toggleSelected.Position = UDim2.new(1, -232, 0, 4)
+
+local toggleAll = pill(row1, "ALL: OFF", 72)
+toggleAll.Position = UDim2.new(1, -154, 0, 4)
+
+local clearSel = pill(row1, "CLEAR", 72)
+clearSel.Position = UDim2.new(1, -76, 0, 4)
+clearSel.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
+
+local rowSelCount = label(mainInner, "Selected: 0", 0)
+
+local drop = Instance.new("Frame")
+drop.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
+drop.BorderSizePixel = 0
+drop.Position = UDim2.new(0, 0, 1, 8)
+drop.Size = UDim2.new(1, 0, 0, 0)
+drop.ClipsDescendants = true
+drop.Parent = targetBtn
+
+local dropCorner = Instance.new("UICorner")
+dropCorner.CornerRadius = UDim.new(0, 10)
+dropCorner.Parent = drop
+
+local dropStroke = Instance.new("UIStroke")
+dropStroke.Thickness = 1
+dropStroke.Color = Color3.fromRGB(32, 32, 38)
+dropStroke.Parent = drop
+
+local searchRow = Instance.new("Frame")
+searchRow.BackgroundTransparency = 1
+searchRow.Size = UDim2.new(1, -12, 0, 34)
+searchRow.Position = UDim2.new(0, 6, 0, 6)
+searchRow.Parent = drop
+
+local searchBox = inputBox(searchRow, 9999, "")
+searchBox.Size = UDim2.new(1, 0, 1, 0)
+searchBox.PlaceholderText = "Search player..."
+searchBox.Text = ""
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.Position = UDim2.new(0, 6, 0, 46)
+scroll.Size = UDim2.new(1, -12, 1, -52)
+scroll.ScrollBarThickness = 6
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.Parent = drop
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 6)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = scroll
+
+local function refreshCanvas()
+	task.defer(function()
+		scroll.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 6)
+	end)
+end
+
+local row2 = Instance.new("Frame")
+row2.BackgroundTransparency = 1
+row2.Size = UDim2.new(1, 0, 0, 34)
+row2.Parent = mainInner
+
+local xBox = inputBox(row2, 70, "8")
+xBox.Position = UDim2.new(0, 0, 0, 0)
+
+local yBox = inputBox(row2, 70, "10")
+yBox.Position = UDim2.new(0, 82, 0, 0)
+
+local zBox = inputBox(row2, 70, "4")
+zBox.Position = UDim2.new(0, 164, 0, 0)
+
+local applyBtn = purpleButton(row2, "APPLY", 110)
+applyBtn.Position = UDim2.new(1, -110, 0, 0)
+
+local function selectedCount()
+	local n = 0
+	for _ in pairs(selectedPlayers) do n += 1 end
+	return n
+end
+
+local function updateSelectedText()
+	rowSelCount.Text = "Selected: " .. tostring(selectedCount())
+end
+
+local function setExpanded(state)
+	expanded = state
+	caret.Text = expanded and "▴" or "▾"
+	drop.Size = expanded and UDim2.new(1, 0, 0, 240) or UDim2.new(1, 0, 0, 0)
+end
+
+local function revertSelectedOnly()
+	clearHighlights(selectedHighlights)
+	for plr, torso in pairs(selectedTorso) do
+		if torso and torso.Parent then
+			revertTorso(torso)
+		end
+		selectedTorso[plr] = nil
+	end
+end
+
+local function revertAllApplied()
+	clearHighlights(allHighlights)
+	for torso in pairs(original) do
+		if torso and torso.Parent then
+			revertTorso(torso)
+		else
+			original[torso] = nil
+		end
+	end
+end
+
+local function applySelected(sizeVec)
+	revertSelectedOnly()
+	if not enabledSelected then return end
+	for plr in pairs(selectedPlayers) do
+		if plr ~= LocalPlayer then
+			local char = findLivingCharacterForPlayer(plr)
+			local torso = char and getTorso(char)
+			if torso and torso:IsA("BasePart") then
+				selectedTorso[plr] = torso
+				applyHitbox(torso, sizeVec)
+				setHighlight(selectedHighlights, torso, "Cheddar_SelectedTorso", 0.65, 0.1)
+			end
+		end
+	end
+end
+
+local function applyAll(sizeVec)
+	clearHighlights(allHighlights)
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer then
+			local char = findLivingCharacterForPlayer(plr)
+			local torso = char and getTorso(char)
+			if torso and torso:IsA("BasePart") then
+				applyHitbox(torso, sizeVec)
+				setHighlight(allHighlights, torso, "Cheddar_AllTorso", 0.78, 0.25)
+			end
+		end
+	end
+end
+
+local function commitSize()
+	local v = parseSize(xBox.Text, yBox.Text, zBox.Text)
+	xBox.Text = tostring(v.X)
+	yBox.Text = tostring(v.Y)
+	zBox.Text = tostring(v.Z)
+	if enabledAll then
+		revertAllApplied()
+		applyAll(v)
+	elseif enabledSelected then
+		applySelected(v)
+	end
+end
+
+local function setSelectedMode(state)
+	enabledSelected = state
+	toggleSelected.Text = enabledSelected and "SEL: ON" or "SEL: OFF"
+	toggleSelected.BackgroundColor3 = enabledSelected and Color3.fromRGB(60, 130, 85) or Color3.fromRGB(120, 52, 52)
+	if enabledSelected then
+		enabledAll = false
+		toggleAll.Text = "ALL: OFF"
+		toggleAll.BackgroundColor3 = Color3.fromRGB(120, 52, 52)
+		clearHighlights(allHighlights)
+		applySelected(parseSize(xBox.Text, yBox.Text, zBox.Text))
+	else
+		revertSelectedOnly()
+	end
+end
+
+local function setAllMode(state)
+	enabledAll = state
+	toggleAll.Text = enabledAll and "ALL: ON" or "ALL: OFF"
+	toggleAll.BackgroundColor3 = enabledAll and Color3.fromRGB(60, 130, 85) or Color3.fromRGB(120, 52, 52)
+	if enabledAll then
+		enabledSelected = false
+		toggleSelected.Text = "SEL: OFF"
+		toggleSelected.BackgroundColor3 = Color3.fromRGB(120, 52, 52)
+		revertSelectedOnly()
+		revertAllApplied()
+		applyAll(parseSize(xBox.Text, yBox.Text, zBox.Text))
+	else
+		revertAllApplied()
+	end
+end
+
+local function stylePlayerButton(btn, isSel)
+	local stroke = btn:FindFirstChild("Stroke")
+	if stroke then
+		stroke.Color = isSel and Color3.fromRGB(130, 88, 255) or Color3.fromRGB(28, 28, 34)
+		stroke.Thickness = isSel and 2 or 1
+	end
+	btn.Text = (isSel and "  ✓ " or "  ") .. btn.Name
+end
+
+local function filterButtons()
+	local q = string.lower(searchBox.Text or "")
+	for plr, btn in pairs(buttons) do
+		if btn and btn.Parent then
+			local name = string.lower(plr.Name)
+			btn.Visible = (q == "") or (string.find(name, q, 1, true) ~= nil)
+		end
+	end
+	refreshCanvas()
+end
+
+local function toggleSelect(plr)
+	if plr == LocalPlayer then return end
+	if selectedPlayers[plr] then
+		selectedPlayers[plr] = nil
+	else
+		selectedPlayers[plr] = true
+	end
+	local btn = buttons[plr]
+	if btn then
+		stylePlayerButton(btn, selectedPlayers[plr] == true)
+	end
+	updateSelectedText()
+	if enabledSelected and not enabledAll then
+		applySelected(parseSize(xBox.Text, yBox.Text, zBox.Text))
+	end
+end
+
+local function makePlayerButton(plr)
+	local b = Instance.new("TextButton")
+	b.Name = plr.Name
+	b.Size = UDim2.new(1, 0, 0, 32)
+	b.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+	b.BorderSizePixel = 0
+	b.Font = Enum.Font.GothamSemibold
+	b.TextSize = 13
+	b.TextColor3 = Color3.fromRGB(240, 240, 245)
+	b.TextXAlignment = Enum.TextXAlignment.Left
+	b.AutoButtonColor = false
+	b.Parent = scroll
+
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 10)
+	c.Parent = b
+
+	local s = Instance.new("UIStroke")
+	s.Name = "Stroke"
+	s.Thickness = 1
+	s.Color = Color3.fromRGB(28, 28, 34)
+	s.Parent = b
+
+	stylePlayerButton(b, selectedPlayers[plr] == true)
+
+	b.MouseButton1Click:Connect(function()
+		toggleSelect(plr)
+	end)
+
+	return b
+end
+
+local function rebuildList()
+	for plr, btn in pairs(buttons) do
+		if btn then btn:Destroy() end
+		buttons[plr] = nil
+	end
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer then
+			buttons[plr] = makePlayerButton(plr)
+		end
+	end
+	filterButtons()
+	updateSelectedText()
+end
+
+local function removePlayer(plr)
+	local btn = buttons[plr]
+	if btn then
+		btn:Destroy()
+		buttons[plr] = nil
+	end
+	selectedPlayers[plr] = nil
+	local torso = selectedTorso[plr]
+	if torso then
+		if selectedHighlights[torso] then
+			selectedHighlights[torso]:Destroy()
+			selectedHighlights[torso] = nil
+		end
+		revertTorso(torso)
+		selectedTorso[plr] = nil
+	end
+	updateSelectedText()
+	filterButtons()
+end
+
+local function hookCharacterAdded(plr)
+	plr.CharacterAdded:Connect(function()
+		task.wait(0.25)
+		if enabledAll or enabledSelected then
+			commitSize()
+		end
+	end)
+end
+
+targetBtn.MouseButton1Click:Connect(function()
+	setExpanded(not expanded)
+end)
+
+toggleSelected.MouseButton1Click:Connect(function()
+	setSelectedMode(not enabledSelected)
+end)
+
+toggleAll.MouseButton1Click:Connect(function()
+	setAllMode(not enabledAll)
+end)
+
+clearSel.MouseButton1Click:Connect(function()
+	selectedPlayers = {}
+	for plr, btn in pairs(buttons) do
+		if btn then stylePlayerButton(btn, false) end
+	end
+	updateSelectedText()
+	if enabledSelected and not enabledAll then
+		revertSelectedOnly()
+	end
+end)
+
+applyBtn.MouseButton1Click:Connect(commitSize)
+xBox.FocusLost:Connect(commitSize)
+yBox.FocusLost:Connect(commitSize)
+zBox.FocusLost:Connect(commitSize)
+searchBox:GetPropertyChangedSignal("Text"):Connect(filterButtons)
+
+Players.PlayerAdded:Connect(function(plr)
+	if plr ~= LocalPlayer then
+		buttons[plr] = makePlayerButton(plr)
+		hookCharacterAdded(plr)
+		filterButtons()
+		if enabledAll or enabledSelected then
+			task.wait()
+			commitSize()
+		end
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(plr)
+	removePlayer(plr)
+	if enabledAll or enabledSelected then
+		task.wait()
+		commitSize()
+	end
+end)
+
+Living.ChildAdded:Connect(function()
+	task.wait()
+	if enabledAll or enabledSelected then
+		commitSize()
+	end
+end)
+
+for _, plr in ipairs(Players:GetPlayers()) do
+	if plr ~= LocalPlayer then
+		hookCharacterAdded(plr)
+	end
+end
+
+local drag = Instance.new("Frame")
+drag.Size = UDim2.new(1, -120, 0, 44)
+drag.BackgroundTransparency = 1
+drag.Parent = topbar
+
+local dragging = false
+local dragStart, startPos
+local dragConn
+
+drag.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		startPos = root.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+drag.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement then
+		if dragConn then dragConn:Disconnect() end
+		dragConn = UIS.InputChanged:Connect(function(changed)
+			if dragging and changed == input then
+				local delta = input.Position - dragStart
+				root.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			end
+		end)
+	end
+end)
+
+local minimized = false
+minimizeBtn.MouseButton1Click:Connect(function()
+	minimized = not minimized
+	body.Visible = not minimized
+	root.Size = minimized and UDim2.new(0, 760, 0, 44) or UDim2.new(0, 760, 0, 430)
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+	gui:Destroy()
+	revertSelectedOnly()
+	revertAllApplied()
+	clearHighlights(selectedHighlights)
+	clearHighlights(allHighlights)
+end)
+
+UIS.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.LeftAlt then
+		uiVisible = not uiVisible
+		root.Visible = uiVisible
+	end
+end)
+
+label(visualsInner, "Nothing here yet.", 0)
+label(miscInner, "Nothing here yet.", 0)
+label(uiInner, "UI Toggle: LeftAlt", 0)
+
+rebuildList()
+setExpanded(false)
+setSelectedMode(false)
+setAllMode(false)
